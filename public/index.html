@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Fund &amp; Market Dashboard</title>
+<link rel="stylesheet" href="css/style.css" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <h1>Fund &amp; Market Dashboard</h1>
+    <div id="market-ticker" class="ticker">Loading market data&hellip;</div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="dashboard">Portfolio</button>
+    <button class="tab-btn" data-tab="details">Fund Sector &amp; Holdings</button>
+  </nav>
+
+  <main>
+    <section id="tab-dashboard" class="tab-panel active">
+      <div id="dashboard-error" class="error-banner" hidden></div>
+
+      <div class="summary-cards" id="summary-cards">
+        <div class="card">
+          <span class="card-label">Portfolio Value</span>
+          <span class="card-value" id="summary-value">&mdash;</span>
+        </div>
+        <div class="card">
+          <span class="card-label">Total Cost</span>
+          <span class="card-value" id="summary-cost">&mdash;</span>
+        </div>
+        <div class="card" id="summary-profit-card">
+          <span class="card-label">Profit / Loss</span>
+          <span class="card-value" id="summary-profit">&mdash;</span>
+          <span class="card-sub" id="summary-profit-pct"></span>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="panel">
+          <h2>Portfolio Allocation</h2>
+          <canvas id="allocation-chart" height="260"></canvas>
+        </div>
+        <div class="panel">
+          <h2>Profit / Loss by Fund</h2>
+          <canvas id="profit-chart" height="260"></canvas>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Holdings</h2>
+        <div class="table-scroll">
+          <table id="holdings-table">
+            <thead>
+              <tr>
+                <th>Fund</th>
+                <th>Qty</th>
+                <th>Avg. Cost</th>
+                <th>Price</th>
+                <th>Value</th>
+                <th>Profit / Loss</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <h2 class="section-title">Price History</h2>
+      <div class="fund-grid" id="fund-history-grid"></div>
+    </section>
+
+    <section id="tab-details" class="tab-panel">
+      <p class="hint">
+        Asset-class composition comes from TEFAS. Individual equity holdings are
+        a best-effort pull from Fintables and may be unavailable if their page
+        layout has changed.
+      </p>
+      <div class="fund-grid" id="fund-details-grid"></div>
+    </section>
+  </main>
+
+  <footer>
+    <span id="status-line">&mdash;</span>
+    <button id="refresh-btn">Refresh now</button>
+  </footer>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

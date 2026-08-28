@@ -1,0 +1,28 @@
+{
+  "currency": "TRY",
+  "funds": [
+    {
+      "code": "AFA",
+      "label": "Ak Portföy Amerika Yabancı BYF Fon Sepeti Fonu",
+      "lots": [
+        { "date": "2026-02-10", "quantity": 500, "price": 11.20 },
+        { "date": "2026-05-03", "quantity": 300, "price": 12.85 }
+      ]
+    },
+    {
+      "code": "TTE",
+      "label": "İş Portföy Teknoloji Sektörü Hisse Senedi Fonu",
+      "lots": [
+        { "date": "2026-01-20", "quantity": 1000, "price": 3.42 }
+      ]
+    },
+    {
+      "code": "YAY",
+      "label": "Yapı Kredi Portföy Yabancı Teknoloji Sektörü Hisse Senedi Fonu",
+      "lots": [
+        { "date": "2026-03-15", "quantity": 750, "price": 5.10 },
+        { "date": "2026-06-01", "quantity": 250, "price": 5.65 }
+      ]
+    }
+  ]
+}

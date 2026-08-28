@@ -1,0 +1,19 @@
+{
+  "name": "market-fund-management",
+  "version": "1.0.0",
+  "description": "Local dashboard that tracks your TEFAS fund portfolio in near-real-time: current value, profit/loss, per-fund price charts, allocation breakdown and a market ticker.",
+  "private": true,
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "express": "^4.19.2"
+  }
+}
