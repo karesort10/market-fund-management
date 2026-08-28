@@ -106,6 +106,28 @@ The server re-reads this file on every scheduled refresh, so changes take
 effect within one refresh cycle (or immediately via the "Refresh now"
 button).
 
+## When something says "unavailable"
+
+Every data source here is a third party that can block, move, or
+rate-limit requests, and from the UI those all look alike. To find out
+which one is actually failing and why, run:
+
+```bash
+npm run diagnose          # or: npm run diagnose YOURFUNDCODE
+```
+
+It hits each source directly from your machine and prints a per-source
+OK/FAIL with the real error and timing, plus a summary of what that means
+for the dashboard. Takes well under a minute.
+
+**Expect individual stock holdings to fail.** Fintables sits behind bot
+protection that rejects automated requests with `HTTP 403`. That check is
+based on the TLS handshake, not just headers, so a plain Node/`curl`
+request cannot pass it no matter what `User-Agent` it sends — the page
+still opens normally in a browser, which is why each fund links to it.
+Everything else on that tab (the asset-class pie charts) comes from TEFAS
+and is unaffected.
+
 ## Trading and cash balance
 
 Use the **Trade** tab instead of hand-editing `portfolio.json` once you're

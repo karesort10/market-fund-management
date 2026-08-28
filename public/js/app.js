@@ -198,6 +198,26 @@ function renderFundHistoryGrid(snapshot) {
 // ---- Fund sector & holdings tab ----------------------------------------
 
 function renderFundDetails(snapshot) {
+  // When every fund fails the same way, that's one systemic cause (a
+  // blocked source), not 11 separate problems — say it once, clearly,
+  // instead of repeating a bare "HTTP 403" on every card.
+  const notice = document.getElementById("details-notice");
+  const withHoldings = snapshot.funds.filter((f) => f.holdings?.ok).length;
+  if (snapshot.funds.length > 0 && withHoldings === 0) {
+    const reason = snapshot.funds[0]?.holdings?.error || "";
+    notice.hidden = false;
+    notice.innerHTML = /40[13]/.test(reason)
+      ? `<strong>Individual stock holdings are unavailable.</strong> Fintables (the only source that publishes which
+         shares each fund holds) is refusing automated requests with <code>${reason}</code>. This is bot protection on
+         their side, not a bug in your setup, and it can't be worked around from a plain script.
+         The asset-class breakdown below still comes from TEFAS and is unaffected — and each fund links to its
+         Fintables page, which opens fine in a normal browser.`
+      : `<strong>Individual stock holdings are unavailable</strong> for every fund (${reason}). The asset-class
+         breakdown below still comes from TEFAS and is unaffected.`;
+  } else {
+    notice.hidden = true;
+  }
+
   const grid = document.getElementById("fund-details-grid");
   grid.innerHTML = snapshot.funds
     .map((f) => {
@@ -212,7 +232,7 @@ function renderFundDetails(snapshot) {
         ? `<ul class="holdings-list">${f.holdings.holdings
             .map((h) => `<li><span>${h.ticker}</span><span>${h.percent.toFixed(2)}%</span></li>`)
             .join("")}</ul>`
-        : `<p class="holdings-unavailable">Individual share holdings unavailable${f.holdings?.error ? `: ${f.holdings.error}` : ""}. See <a href="${f.holdings?.url || "#"}" target="_blank" rel="noopener">Fintables</a>.</p>`;
+        : `<p class="holdings-unavailable">Not available${f.holdings?.error ? ` (${f.holdings.error})` : ""} — <a href="${f.holdings?.url || "#"}" target="_blank" rel="noopener">view on Fintables</a>.</p>`;
 
       return `<div class="fund-card">
         <h3>${f.label}</h3>
