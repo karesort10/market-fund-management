@@ -26,14 +26,29 @@ equity holdings.
 
 | Source | Used for | Reliability |
 |---|---|---|
-| [TEFAS](https://www.tefas.gov.tr) `BindHistoryInfo` / `BindHistoryAllocation` | Fund NAV history, asset-class allocation | Documented, stable public JSON endpoints used by tefas.gov.tr's own charts. |
+| [TEFAS](https://www.tefas.gov.tr) `api/funds/fonGnlBlgSiraliGetir` / `dagilimSiraliGetirT` | Fund NAV history, asset-class allocation | TEFAS retired its older `BindHistoryInfo`/`BindHistoryAllocation` API in 2026; this uses the JSON gateway that replaced it (undocumented officially, but the same one actively-maintained community TEFAS clients use). No API key, but **rate-limited to roughly 6 requests/minute** — see below. |
 | [Yahoo Finance](https://finance.yahoo.com) chart API | BIST 100 / USDTRY / EURTRY / gold ticker | Public, unauthenticated, widely used. |
 | [Fintables](https://fintables.com) fund pages | Individual equity holdings per fund | **Best effort.** Fintables has no documented public API, so this scrapes the rendered page. If Fintables changes their markup, this can stop finding data — the UI will show "unavailable" instead of breaking, and a link to the page is always shown as a fallback. |
 
 TEFAS publishes fund prices **once per trading day** (after markets
 close), so "real-time" for fund NAVs means "refreshed as often as TEFAS
-actually updates it", not tick-by-tick. The market ticker (index/FX/gold)
-does update intraday.
+actually updates it and its rate limit allows", not tick-by-tick. The
+market ticker (index/FX/gold) does update intraday.
+
+### TEFAS's rate limit and the first load
+
+TEFAS's API allows roughly 6 requests/minute. Every fund needs 2 requests
+(price + allocation), so a portfolio of N funds takes about `N × 20`
+seconds to fully refresh — e.g. ~4 minutes for 11 funds. All requests are
+queued through a single throttle app-wide, so this happens automatically
+and never bursts past that pace.
+
+**This means the first load after starting the server can take a few
+minutes.** During that window `/api/portfolio` returns `503` and the
+dashboard shows an amber "Loading your portfolio for the first time…"
+banner (polling every 8s) rather than data — this is expected, not a bug.
+Once the first refresh completes it switches to the normal 10-minute
+background refresh cycle and polls that every 60s.
 
 ## Setup
 

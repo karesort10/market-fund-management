@@ -230,14 +230,27 @@ function renderFundDetails(snapshot) {
 
 // ---- Orchestration ------------------------------------------------------
 
+let firstLoadSucceeded = false;
+
 async function loadPortfolio() {
   const errorBanner = document.getElementById("dashboard-error");
   try {
     const res = await fetch("/api/portfolio");
+    if (res.status === 503 && !firstLoadSucceeded) {
+      // Expected right after the server starts: TEFAS is rate-limited to a
+      // handful of requests/minute, so the very first refresh across a
+      // full portfolio can take a few minutes. Not an error yet.
+      errorBanner.hidden = false;
+      errorBanner.className = "warning-banner";
+      errorBanner.textContent = "Loading your portfolio for the first time — TEFAS's rate limit means this can take a few minutes. This page updates automatically once it's ready.";
+      return;
+    }
     if (!res.ok) throw new Error((await res.json()).error || `HTTP ${res.status}`);
     const snapshot = await res.json();
 
+    firstLoadSucceeded = true;
     errorBanner.hidden = true;
+    errorBanner.className = "error-banner";
     renderSummary(snapshot);
     renderAllocationChart(snapshot);
     renderProfitChart(snapshot);
@@ -246,6 +259,7 @@ async function loadPortfolio() {
     renderFundDetails(snapshot);
   } catch (err) {
     errorBanner.hidden = false;
+    errorBanner.className = "error-banner";
     errorBanner.textContent = `Couldn't load portfolio data: ${err.message}`;
   }
 }
@@ -275,4 +289,14 @@ document.getElementById("refresh-btn").addEventListener("click", async () => {
 refreshAll();
 setInterval(loadMarket, 30 * 1000);
 setInterval(loadStatus, 30 * 1000);
-setInterval(loadPortfolio, 60 * 1000);
+
+// Poll quickly until the first refresh lands (it can take a few minutes
+// due to TEFAS's rate limit), then settle into the normal slow cadence —
+// no point hammering the server once the portfolio has loaded.
+(function pollPortfolio() {
+  const delay = firstLoadSucceeded ? 60 * 1000 : 8 * 1000;
+  setTimeout(async () => {
+    await loadPortfolio();
+    pollPortfolio();
+  }, delay);
+})();
