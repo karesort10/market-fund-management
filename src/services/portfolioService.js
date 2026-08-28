@@ -57,7 +57,7 @@ async function mapWithConcurrency(items, limit, fn) {
 async function loadFund(fund, cachedFund) {
   const { quantity, cost, avgCost } = summarizeLots(fund.lots);
 
-  let historyRows, historyError, allocationSlices, allocationAsOf, holdings;
+  let historyRows, historyError, allocationSlices, allocationError, holdings;
 
   if (cachedFund && cachedFund.priced) {
     // Reuse the last successfully-fetched TEFAS/Fintables data instead of
@@ -67,6 +67,7 @@ async function loadFund(fund, cachedFund) {
     historyRows = (cachedFund.priceHistory || []).map((r) => ({ date: new Date(r.date), price: r.price }));
     historyError = null;
     allocationSlices = { slices: cachedFund.allocation, asOf: cachedFund.allocationAsOf };
+    allocationError = cachedFund.allocationError || null;
     holdings = cachedFund.holdings;
   } else {
     const [history, allocation, holdingsResult] = await Promise.all([
@@ -77,6 +78,10 @@ async function loadFund(fund, cachedFund) {
     historyRows = Array.isArray(history) ? history : history.rows || [];
     historyError = Array.isArray(history) ? null : history.error;
     allocationSlices = allocation;
+    // fetchFundAllocation resolves even on success with zero rows (e.g. a
+    // fund TEFAS just has no allocation breakdown for), which isn't an
+    // error — only surface .error, never invent one from an empty result.
+    allocationError = allocation.error || null;
     holdings = holdingsResult;
   }
 
@@ -101,6 +106,7 @@ async function loadFund(fund, cachedFund) {
     historyError,
     allocation: allocationSlices.slices || [],
     allocationAsOf: allocationSlices.asOf || null,
+    allocationError,
     holdings,
   };
 }

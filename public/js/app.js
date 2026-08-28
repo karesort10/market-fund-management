@@ -189,16 +189,22 @@ function renderFundDetails(snapshot) {
   const grid = document.getElementById("fund-details-grid");
   grid.innerHTML = snapshot.funds
     .map((f) => {
+      const hasAllocation = f.allocation && f.allocation.length > 0;
+      const allocationHtml = hasAllocation
+        ? `<span class="fund-code">${f.code} &middot; allocation as of ${fmtDate(f.allocationAsOf)}</span>
+           <canvas id="alloc-${f.code}" height="180"></canvas>`
+        : `<span class="fund-code">${f.code}</span>
+           <p class="holdings-unavailable">Asset allocation unavailable${f.allocationError ? `: ${f.allocationError}` : " (TEFAS returned no breakdown for this fund)."}</p>`;
+
       const holdingsHtml = f.holdings && f.holdings.ok
         ? `<ul class="holdings-list">${f.holdings.holdings
             .map((h) => `<li><span>${h.ticker}</span><span>${h.percent.toFixed(2)}%</span></li>`)
             .join("")}</ul>`
-        : `<p class="holdings-unavailable">Individual share holdings unavailable${f.holdings?.error ? ` (${f.holdings.error})` : ""}. See <a href="${f.holdings?.url || "#"}" target="_blank" rel="noopener">Fintables</a>.</p>`;
+        : `<p class="holdings-unavailable">Individual share holdings unavailable${f.holdings?.error ? `: ${f.holdings.error}` : ""}. See <a href="${f.holdings?.url || "#"}" target="_blank" rel="noopener">Fintables</a>.</p>`;
 
       return `<div class="fund-card">
         <h3>${f.label}</h3>
-        <span class="fund-code">${f.code} &middot; allocation as of ${fmtDate(f.allocationAsOf)}</span>
-        <canvas id="alloc-${f.code}" height="180"></canvas>
+        ${allocationHtml}
         <h4 style="margin:14px 0 4px;font-size:0.85rem;color:var(--muted)">Top equity holdings (Fintables)</h4>
         ${holdingsHtml}
       </div>`;

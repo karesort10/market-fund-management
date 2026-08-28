@@ -1,3 +1,5 @@
+require("dotenv").config({ quiet: true }); // loads .env into process.env if present — see .env.example
+
 const path = require("path");
 const express = require("express");
 const { buildPortfolioSnapshot } = require("./src/services/portfolioService");

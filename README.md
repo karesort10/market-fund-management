@@ -131,11 +131,21 @@ per-sector predictions, and a critical-warnings box for conflicts or
 major news relevant to *your specific funds* — is entirely optional and
 disabled by default.
 
-To enable it:
+### How to turn it on (step by step)
 
-```bash
-ANTHROPIC_API_KEY=sk-ant-... npm start
-```
+1. **Get a key**: go to **[console.anthropic.com](https://console.anthropic.com)**, sign up or log in, then open **Settings → API Keys** (or **Get API keys** on the dashboard) and click **Create Key**. Copy the key it shows you (starts with `sk-ant-...`) — you won't be able to see it again after leaving the page, so copy it now.
+2. You'll also need a payment method on that account (**Settings → Billing**) — this key is billed to *your* Anthropic account, separately from this app. See the cost estimate below before adding one; it's small, but it's real money.
+3. In this project's folder, copy the example env file:
+   ```bash
+   cp .env.example .env
+   ```
+4. Open `.env` in any text editor and paste your key after the `=`, so the line reads:
+   ```
+   ANTHROPIC_API_KEY=sk-ant-your-actual-key-here
+   ```
+   Save the file. (`.env` is already excluded from git via `.gitignore`, so this key never gets committed or pushed anywhere.)
+5. Restart the server (`npm start`). The terminal should print `AI market analysis enabled` on startup — if it instead prints `AI market analysis disabled`, the key wasn't picked up; double check the `.env` file is in the project's root folder (next to `package.json`) and the variable name is spelled exactly `ANTHROPIC_API_KEY`.
+6. Open the **News & Insights** tab — either wait for the first automatic analysis (~30 seconds after startup) or click **Analyze now**.
 
 **Cost**: this calls Claude (Haiku, Anthropic's cheapest model) with your
 fund list and recent headlines, capped at ~1000 output tokens per call.
