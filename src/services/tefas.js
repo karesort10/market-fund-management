@@ -1,128 +1,166 @@
 // TEFAS (Turkey Electronic Fund Trading Platform) integration.
 //
-// TEFAS publishes fund NAV history and portfolio-allocation history through
-// two documented, unauthenticated JSON endpoints that power the charts on
-// tefas.gov.tr itself:
-//   POST /api/DB/BindHistoryInfo       -> daily price (NAV) history
-//   POST /api/DB/BindHistoryAllocation -> daily asset-allocation breakdown
+// TEFAS retired its old ASP.NET "BindHistoryInfo"/"BindHistoryAllocation"
+// endpoints in 2026 in favor of a JSON API behind a new gateway:
+//   POST /api/funds/fonGnlBlgSiraliGetir  -> daily price (NAV) history
+//   POST /api/funds/dagilimSiraliGetirT   -> daily asset-allocation breakdown
+// (mirrors what actively-maintained community clients such as pytefas call,
+// since TEFAS does not publish formal API docs).
+//
+// Two constraints from that same gateway shape everything below:
+// - A single request's date range is capped at roughly a month, so a
+//   longer lookback would need to be split into multiple chunked requests.
+//   To keep request volume down (see the rate limit below), the price
+//   history window is kept to <30 days rather than chunking.
+// - The gateway rate-limits aggressively (community clients throttle
+//   themselves to ~6 requests/minute to avoid it). All requests are queued
+//   through a single throttle so this app never bursts past that pace,
+//   regardless of how many funds are being refreshed concurrently.
 //
 // TEFAS updates a fund's NAV once per trading day (after markets close), so
-// "real time" here means "as fresh as the source publishes", refreshed on an
-// interval rather than streamed tick-by-tick.
-//
-// The API sits behind an ASP.NET session: hitting BindHistoryInfo cold
-// (no cookie, as if you typed the endpoint directly) gets rejected. A real
-// browser first loads the historical-data page, which sets a session
-// cookie, and only then calls the API. This module reproduces that by
-// grabbing the cookie once and reusing it, refreshed periodically.
+// "real time" here means "as fresh as the source publishes and the rate
+// limit allows", refreshed on an interval rather than streamed tick-by-tick.
 
 const BASE_URL = "https://www.tefas.gov.tr";
-const SESSION_PAGE = "/TarihselVeriler.aspx";
-const SESSION_TTL_MS = 10 * 60 * 1000;
+const INFO_PATH = "/api/funds/fonGnlBlgSiraliGetir";
+const ALLOCATION_PATH = "/api/funds/dagilimSiraliGetirT";
 const REQUEST_TIMEOUT_MS = 15 * 1000;
-const USER_AGENT =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+const MIN_REQUEST_INTERVAL_MS = 10 * 1000; // ~6 requests/minute
 
-let session = { cookie: null, fetchedAt: 0 };
+const DEFAULT_HEADERS = {
+  Accept: "*/*",
+  "Content-Type": "application/json",
+  Origin: BASE_URL,
+  Referer: `${BASE_URL}/tr/fon-verileri`,
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+};
 
-async function getSessionCookie() {
-  if (session.cookie && Date.now() - session.fetchedAt < SESSION_TTL_MS) {
-    return session.cookie;
-  }
-  const res = await fetch(`${BASE_URL}${SESSION_PAGE}`, {
-    headers: { "User-Agent": USER_AGENT, Accept: "text/html" },
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+// Serializes every TEFAS request app-wide, spaced at least
+// MIN_REQUEST_INTERVAL_MS apart, no matter how many funds are being
+// fetched at once.
+let queue = Promise.resolve();
+let lastCallAt = 0;
+function throttled(fn) {
+  const result = queue.then(async () => {
+    const wait = Math.max(0, lastCallAt + MIN_REQUEST_INTERVAL_MS - Date.now());
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+    lastCallAt = Date.now();
+    return fn();
   });
-  const cookies = typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
-  const cookie = cookies.map((c) => c.split(";")[0]).join("; ");
-  session = { cookie, fetchedAt: Date.now() };
-  return cookie;
+  queue = result.catch(() => {}); // one failed call must not wedge the queue
+  return result;
 }
 
-function formatDate(d) {
+function formatYmd(d) {
   const pad = (n) => String(n).padStart(2, "0");
-  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
 }
 
-// TEFAS timestamps arrive as ASP.NET's "/Date(1699999999000)/" wire format.
-function parseNetDate(value) {
-  if (typeof value !== "string") return null;
-  const match = value.match(/\/Date\((\d+)\)\//);
-  if (!match) return null;
-  return new Date(Number(match[1]));
+function buildBody(fonTipi, fonKodu, start, end) {
+  return {
+    fonTipi,
+    fonKodu: fonKodu || null,
+    aramaMetni: null,
+    fonTurKod: null,
+    fonGrubu: null,
+    sfonTurKod: null,
+    fonTurAciklama: null,
+    kurucuKod: null,
+    basTarih: formatYmd(start),
+    bitTarih: formatYmd(end),
+    basSira: 1,
+    bitSira: 100000,
+    dil: "TR",
+    sFonTurKod: "",
+    fonKod: "",
+    fonGrup: "",
+    fonUnvanTip: "",
+  };
 }
 
-async function postForm(path, params, { retried = false } = {}) {
-  const cookie = await getSessionCookie();
-  const body = new URLSearchParams(params).toString();
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-      Accept: "application/json, text/javascript, */*; q=0.01",
-      "X-Requested-With": "XMLHttpRequest",
-      Origin: BASE_URL,
-      Referer: `${BASE_URL}${SESSION_PAGE}`,
-      "User-Agent": USER_AGENT,
-      ...(cookie ? { Cookie: cookie } : {}),
-    },
-    body,
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
+async function postJson(path, body) {
+  return throttled(async () => {
+    const res = await fetch(`${BASE_URL}${path}`, {
+      method: "POST",
+      headers: DEFAULT_HEADERS,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
 
-  if (!res.ok) {
-    // A stale/rejected session cookie is the most common cause of a
-    // non-2xx here; force a fresh one and retry exactly once before
-    // giving up, so a transient session expiry doesn't surface as a
-    // permanent-looking error.
-    if (!retried && (res.status === 403 || res.status === 401)) {
-      session = { cookie: null, fetchedAt: 0 };
-      return postForm(path, params, { retried: true });
+    const text = await res.text();
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      throw new Error(`TEFAS request failed (${path}): HTTP ${res.status} — non-JSON response: ${text.slice(0, 200)}`);
     }
-    const snippet = (await res.text().catch(() => "")).slice(0, 200);
-    throw new Error(`TEFAS request failed (${path}): HTTP ${res.status}${snippet ? ` — ${snippet}` : ""}`);
-  }
 
-  const json = await res.json();
-  return Array.isArray(json?.data) ? json.data : [];
+    if (!res.ok) {
+      const detail = json.errorMessage || json.faultString || text.slice(0, 200);
+      throw new Error(`TEFAS request failed (${path}): HTTP ${res.status} — ${detail}`);
+    }
+
+    // TEFAS's gateway can return HTTP 200 with an error payload instead of
+    // a non-2xx status; errorCode "0"/0 means success, so only treat a
+    // truthy *non-zero* code (or any errorMessage) as failure.
+    const hasApiError = json.errorMessage || (json.errorCode && json.errorCode !== "0" && json.errorCode !== 0);
+    if (hasApiError) {
+      throw new Error(`TEFAS API error (${path}): ${json.errorMessage || json.errorCode}`);
+    }
+
+    return Array.isArray(json.resultList) ? json.resultList : [];
+  });
+}
+
+// Dates come back in whichever format the current gateway happens to use;
+// this has changed once already (legacy ASP.NET "/Date(...)/ " wire format
+// vs. the new gateway's likely ISO/epoch/YYYYMMDD), so parsing tries every
+// shape rather than assuming one.
+function parseApiDate(value) {
+  if (value == null) return null;
+  if (typeof value === "number") {
+    return new Date(value < 1e12 ? value * 1000 : value);
+  }
+  if (typeof value === "string") {
+    const netMatch = value.match(/\/Date\((\d+)\)\//);
+    if (netMatch) return new Date(Number(netMatch[1]));
+    if (/^\d{8}$/.test(value)) {
+      return new Date(`${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}T00:00:00`);
+    }
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return null;
 }
 
 /**
  * Fetch daily NAV history for a single fund code over a date range.
+ * Capped under ~30 days to stay within a single request (see header note).
  * @returns {Promise<Array<{date: Date, price: number}>>}
  */
-async function fetchFundHistory(fundCode, { days = 90 } = {}) {
+async function fetchFundHistory(fundCode, { days = 27 } = {}) {
   const end = new Date();
   const start = new Date();
   start.setDate(start.getDate() - days);
 
-  const rows = await postForm("/api/DB/BindHistoryInfo", {
-    fontip: "YAT",
-    fonkod: fundCode,
-    bastarih: formatDate(start),
-    bittarih: formatDate(end),
-  });
+  const rows = await postJson(INFO_PATH, buildBody("YAT", fundCode, start, end));
 
   return rows
     .map((row) => ({
-      date: parseNetDate(row.TARIH),
-      price: Number(row.FIYAT),
-      title: row.FONUNVAN,
-      shareCount: row.TEDPAYSAYISI != null ? Number(row.TEDPAYSAYISI) : null,
-      investorCount: row.KISISAYISI != null ? Number(row.KISISAYISI) : null,
-      marketCap: row.PORTFOYBUYUKLUK != null ? Number(row.PORTFOYBUYUKLUK) : null,
+      date: parseApiDate(row.tarih),
+      price: Number(row.fiyat),
+      title: row.fonUnvan,
+      shareCount: row.tedPaySayisi != null ? Number(row.tedPaySayisi) : null,
+      investorCount: row.kisiSayisi != null ? Number(row.kisiSayisi) : null,
+      marketCap: row.portfoyBuyukluk != null ? Number(row.portfoyBuyukluk) : null,
     }))
     .filter((row) => row.date && Number.isFinite(row.price))
     .sort((a, b) => a.date - b.date);
 }
 
 // Fields present on every allocation row that are not asset-class weights.
-const ALLOCATION_META_KEYS = new Set([
-  "FONKODU",
-  "FONUNVAN",
-  "TARIH",
-  "BILGI",
-]);
+const ALLOCATION_META_KEYS = new Set(["fonKodu", "fonUnvan", "tarih"]);
 
 function prettifyKey(key) {
   return key
@@ -135,30 +173,25 @@ function prettifyKey(key) {
  * Fetch the most recent asset-allocation breakdown (stocks / bonds / gold /
  * repo / etc. as % of the fund) for a single fund code.
  *
- * TEFAS does not fix the set of asset-class columns across fund types, so
- * rather than hardcoding column names, every numeric, non-zero field on the
- * most recent row is treated as an allocation slice.
+ * The exact set of asset-class columns TEFAS returns isn't fixed across
+ * fund types, so rather than hardcoding column names, every numeric,
+ * plausible-percentage field on the most recent row is treated as a slice.
  *
  * @returns {Promise<{ asOf: Date|null, slices: Array<{label: string, percent: number}> }>}
  */
-async function fetchFundAllocation(fundCode, { days = 30 } = {}) {
+async function fetchFundAllocation(fundCode, { days = 27 } = {}) {
   const end = new Date();
   const start = new Date();
   start.setDate(start.getDate() - days);
 
-  const rows = await postForm("/api/DB/BindHistoryAllocation", {
-    fontip: "YAT",
-    fonkod: fundCode,
-    bastarih: formatDate(start),
-    bittarih: formatDate(end),
-  });
+  const rows = await postJson(ALLOCATION_PATH, buildBody("YAT", fundCode, start, end));
 
   if (rows.length === 0) {
     return { asOf: null, slices: [] };
   }
 
   const latest = rows.reduce((best, row) => {
-    const d = parseNetDate(row.TARIH);
+    const d = parseApiDate(row.tarih);
     if (!d) return best;
     if (!best || d > best._date) return { ...row, _date: d };
     return best;
@@ -169,7 +202,7 @@ async function fetchFundAllocation(fundCode, { days = 30 } = {}) {
   const slices = Object.entries(latest)
     .filter(([key]) => !ALLOCATION_META_KEYS.has(key) && key !== "_date")
     .map(([key, value]) => ({ label: prettifyKey(key), percent: Number(value) }))
-    .filter((slice) => Number.isFinite(slice.percent) && slice.percent > 0.01)
+    .filter((slice) => Number.isFinite(slice.percent) && slice.percent > 0.01 && slice.percent <= 100)
     .sort((a, b) => b.percent - a.percent);
 
   return { asOf: latest._date, slices };

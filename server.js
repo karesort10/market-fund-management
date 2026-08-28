@@ -4,10 +4,13 @@ const { buildPortfolioSnapshot } = require("./src/services/portfolioService");
 const { fetchMarketSnapshot } = require("./src/services/market");
 
 const PORT = Number(process.env.PORT) || 3000;
-// TEFAS only publishes new fund prices once a trading day, so there is no
-// benefit to refreshing that side more often than every few minutes; the
-// market ticker is intraday and refreshed on its own, shorter interval.
-const PORTFOLIO_REFRESH_MS = Number(process.env.PORTFOLIO_REFRESH_MS) || 5 * 60 * 1000;
+// TEFAS only publishes new fund prices once a trading day, so there's no
+// benefit to refreshing that side every few seconds — and TEFAS's API
+// rate-limits to ~6 requests/minute (see src/services/tefas.js), so a
+// portfolio of a dozen funds (2 requests each) takes a few minutes to
+// refresh regardless. 10 minutes leaves headroom above that. The market
+// ticker is a different host with no such limit, refreshed much faster.
+const PORTFOLIO_REFRESH_MS = Number(process.env.PORTFOLIO_REFRESH_MS) || 10 * 60 * 1000;
 const MARKET_REFRESH_MS = Number(process.env.MARKET_REFRESH_MS) || 60 * 1000;
 
 const app = express();
@@ -30,6 +33,15 @@ async function refreshPortfolio() {
     console.error("[portfolio] refresh failed:", err.message);
   }
   cache.portfolioUpdatedAt = new Date().toISOString();
+}
+
+// A refresh can take a few minutes (TEFAS's rate limit), so this
+// reschedules itself after each run completes instead of using
+// setInterval, which would otherwise start overlapping refreshes if one
+// ever ran longer than PORTFOLIO_REFRESH_MS.
+async function schedulePortfolioRefresh() {
+  await refreshPortfolio();
+  setTimeout(schedulePortfolioRefresh, PORTFOLIO_REFRESH_MS);
 }
 
 async function refreshMarket() {
@@ -67,9 +79,9 @@ app.post("/api/refresh", async (req, res) => {
   res.json({ ok: true });
 });
 
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log(`Market & fund dashboard running at http://localhost:${PORT}`);
-  await Promise.all([refreshPortfolio(), refreshMarket()]);
-  setInterval(refreshPortfolio, PORTFOLIO_REFRESH_MS);
+  schedulePortfolioRefresh();
+  refreshMarket();
   setInterval(refreshMarket, MARKET_REFRESH_MS);
 });
