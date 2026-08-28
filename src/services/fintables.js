@@ -19,6 +19,8 @@ const HEADERS = {
   Accept: "text/html",
 };
 
+const REQUEST_TIMEOUT_MS = 15 * 1000;
+
 // Matches a BIST equity ticker: 3-6 uppercase letters, standing alone.
 const TICKER_RE = /^[A-Z]{3,6}$/;
 // Matches a percentage like "12,34%" or "12.34%".
@@ -37,7 +39,7 @@ function parsePercent(text) {
 async function fetchFundHoldings(fundCode) {
   const url = `https://fintables.com/fonlar/${encodeURIComponent(fundCode)}`;
   try {
-    const res = await fetch(url, { headers: HEADERS });
+    const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const html = await res.text();
     const $ = cheerio.load(html);

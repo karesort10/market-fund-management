@@ -69,6 +69,14 @@ function renderSummary(snapshot) {
   profitEl.className = `card-value ${positive ? "positive" : "negative"}`;
   profitPctEl.textContent = fmtPct(totals.profitPercent);
   profitPctEl.className = `card-sub ${positive ? "positive" : "negative"}`;
+
+  const warning = document.getElementById("dashboard-warning");
+  if (totals.unpricedFunds && totals.unpricedFunds.length > 0) {
+    warning.hidden = false;
+    warning.textContent = `Couldn't fetch a current price for: ${totals.unpricedFunds.join(", ")}. Their value/profit below uses cost basis (shown as unavailable in the table) until the next refresh succeeds.`;
+  } else {
+    warning.hidden = true;
+  }
 }
 
 function renderAllocationChart(snapshot) {
@@ -101,7 +109,7 @@ function renderProfitChart(snapshot) {
         {
           label: "Profit / Loss",
           data: snapshot.funds.map((f) => f.profit),
-          backgroundColor: snapshot.funds.map((f) => (f.profit >= 0 ? "#16a34a" : "#dc2626")),
+          backgroundColor: snapshot.funds.map((f) => (f.profit == null ? "#9ca3af" : f.profit >= 0 ? "#16a34a" : "#dc2626")),
         },
       ],
     },
@@ -116,7 +124,15 @@ function renderHoldingsTable(snapshot) {
   const tbody = document.querySelector("#holdings-table tbody");
   tbody.innerHTML = snapshot.funds
     .map((f) => {
-      const cls = f.profit >= 0 ? "positive" : "negative";
+      if (!f.priced) {
+        return `<tr>
+          <td>${f.label}<br><span class="fund-code">${f.code}</span></td>
+          <td>${f.quantity.toLocaleString("tr-TR")}</td>
+          <td>${fmtMoney(f.avgCost, snapshot.currency)}</td>
+          <td colspan="3" class="holdings-unavailable">Price unavailable${f.historyError ? ` (${f.historyError})` : ""}</td>
+        </tr>`;
+      }
+      const cls = f.profit > 0 ? "positive" : f.profit < 0 ? "negative" : "";
       return `<tr>
         <td>${f.label}<br><span class="fund-code">${f.code}</span></td>
         <td>${f.quantity.toLocaleString("tr-TR")}</td>

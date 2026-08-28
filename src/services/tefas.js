@@ -9,15 +9,35 @@
 // TEFAS updates a fund's NAV once per trading day (after markets close), so
 // "real time" here means "as fresh as the source publishes", refreshed on an
 // interval rather than streamed tick-by-tick.
+//
+// The API sits behind an ASP.NET session: hitting BindHistoryInfo cold
+// (no cookie, as if you typed the endpoint directly) gets rejected. A real
+// browser first loads the historical-data page, which sets a session
+// cookie, and only then calls the API. This module reproduces that by
+// grabbing the cookie once and reusing it, refreshed periodically.
 
 const BASE_URL = "https://www.tefas.gov.tr";
-const HEADERS = {
-  "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-  Accept: "application/json, text/javascript, */*; q=0.01",
-  "X-Requested-With": "XMLHttpRequest",
-  Referer: "https://www.tefas.gov.tr/TarihselVeriler.aspx",
-  "User-Agent": "Mozilla/5.0 (compatible; market-fund-management/1.0)",
-};
+const SESSION_PAGE = "/TarihselVeriler.aspx";
+const SESSION_TTL_MS = 10 * 60 * 1000;
+const REQUEST_TIMEOUT_MS = 15 * 1000;
+const USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+let session = { cookie: null, fetchedAt: 0 };
+
+async function getSessionCookie() {
+  if (session.cookie && Date.now() - session.fetchedAt < SESSION_TTL_MS) {
+    return session.cookie;
+  }
+  const res = await fetch(`${BASE_URL}${SESSION_PAGE}`, {
+    headers: { "User-Agent": USER_AGENT, Accept: "text/html" },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+  const cookies = typeof res.headers.getSetCookie === "function" ? res.headers.getSetCookie() : [];
+  const cookie = cookies.map((c) => c.split(";")[0]).join("; ");
+  session = { cookie, fetchedAt: Date.now() };
+  return cookie;
+}
 
 function formatDate(d) {
   const pad = (n) => String(n).padStart(2, "0");
@@ -32,16 +52,37 @@ function parseNetDate(value) {
   return new Date(Number(match[1]));
 }
 
-async function postForm(path, params) {
+async function postForm(path, params, { retried = false } = {}) {
+  const cookie = await getSessionCookie();
   const body = new URLSearchParams(params).toString();
   const res = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
-    headers: HEADERS,
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+      Accept: "application/json, text/javascript, */*; q=0.01",
+      "X-Requested-With": "XMLHttpRequest",
+      Origin: BASE_URL,
+      Referer: `${BASE_URL}${SESSION_PAGE}`,
+      "User-Agent": USER_AGENT,
+      ...(cookie ? { Cookie: cookie } : {}),
+    },
     body,
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
+
   if (!res.ok) {
-    throw new Error(`TEFAS request failed (${path}): HTTP ${res.status}`);
+    // A stale/rejected session cookie is the most common cause of a
+    // non-2xx here; force a fresh one and retry exactly once before
+    // giving up, so a transient session expiry doesn't surface as a
+    // permanent-looking error.
+    if (!retried && (res.status === 403 || res.status === 401)) {
+      session = { cookie: null, fetchedAt: 0 };
+      return postForm(path, params, { retried: true });
+    }
+    const snippet = (await res.text().catch(() => "")).slice(0, 200);
+    throw new Error(`TEFAS request failed (${path}): HTTP ${res.status}${snippet ? ` — ${snippet}` : ""}`);
   }
+
   const json = await res.json();
   return Array.isArray(json?.data) ? json.data : [];
 }

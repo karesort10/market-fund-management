@@ -3,6 +3,8 @@
 // fund NAVs, which only publish once per trading day), which is what makes
 // the dashboard feel "live" between fund NAV updates.
 
+const REQUEST_TIMEOUT_MS = 15 * 1000;
+
 const SYMBOLS = [
   { symbol: "XU100.IS", label: "BIST 100" },
   { symbol: "TRY=X", label: "USD/TRY" },
@@ -15,6 +17,7 @@ async function fetchQuote({ symbol, label }) {
   try {
     const res = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; market-fund-management/1.0)" },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();

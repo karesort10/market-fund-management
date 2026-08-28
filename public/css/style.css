@@ -92,6 +92,15 @@ main { padding: 24px; max-width: 1200px; margin: 0 auto; }
   margin-bottom: 16px;
 }
 
+.warning-banner {
+  background: #fef3c7;
+  color: #92400e;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  font-size: 0.85rem;
+}
+
 .summary-cards {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
