@@ -8,7 +8,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "diagnose": "node scripts/diagnose.js"
+    "diagnose": "node scripts/diagnose.js",
+    "probe": "node scripts/probe-allocation.js"
   },
   "engines": {
     "node": ">=18"
