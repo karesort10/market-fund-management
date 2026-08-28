@@ -228,6 +228,227 @@ function renderFundDetails(snapshot) {
   });
 }
 
+// ---- Balance & transactions ---------------------------------------------
+
+function renderBalance(snapshot) {
+  const { balance, currency } = snapshot;
+  if (!balance) return;
+  document.getElementById("balance-cash").textContent = fmtMoney(balance.cash, currency);
+  document.getElementById("balance-funds").textContent = fmtMoney(balance.fundsValue, currency);
+  document.getElementById("balance-networth").textContent = fmtMoney(balance.netWorth, currency);
+}
+
+const TX_TYPE_LABELS = { buy: "Buy", sell: "Sell", deposit: "Deposit", withdraw: "Withdraw" };
+
+function renderTransactions(snapshot) {
+  const tbody = document.querySelector("#transactions-table tbody");
+  const transactions = snapshot.transactions || [];
+  if (transactions.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" class="holdings-unavailable">No transactions yet.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = transactions
+    .map((t) => {
+      const plCell =
+        t.realizedPL == null ? "—" : `<span class="${t.realizedPL >= 0 ? "positive" : "negative"}">${fmtMoney(t.realizedPL, snapshot.currency)}</span>`;
+      return `<tr>
+        <td>${fmtDate(t.date)}</td>
+        <td>${TX_TYPE_LABELS[t.type] || t.type}</td>
+        <td>${t.code || "—"}</td>
+        <td>${t.quantity != null ? t.quantity.toLocaleString("tr-TR") : "—"}</td>
+        <td>${t.price != null ? fmtMoney(t.price, snapshot.currency) : "—"}</td>
+        <td>${fmtMoney(t.amount, snapshot.currency)}</td>
+        <td>${plCell}</td>
+        <td>${t.note || "—"}</td>
+      </tr>`;
+    })
+    .join("");
+}
+
+// ---- Trade & balance forms ------------------------------------------------
+
+document.getElementById("trade-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById("trade-message");
+  msg.textContent = "Submitting…";
+  msg.className = "form-message";
+
+  const body = {
+    action: document.getElementById("trade-action").value,
+    code: document.getElementById("trade-code").value,
+    quantity: document.getElementById("trade-quantity").value,
+    price: document.getElementById("trade-price").value,
+    date: document.getElementById("trade-date").value || undefined,
+  };
+
+  try {
+    const res = await fetch("/api/trade", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+    msg.textContent = `${body.action === "buy" ? "Bought" : "Sold"} ${body.quantity} ${body.code.toUpperCase()} @ ${body.price}.`;
+    msg.className = "form-message success";
+    document.getElementById("trade-form").reset();
+    renderAllFromSnapshot(data.portfolio);
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = "form-message error";
+  }
+});
+
+document.getElementById("balance-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById("balance-message");
+  msg.textContent = "Submitting…";
+  msg.className = "form-message";
+
+  const body = {
+    action: document.getElementById("balance-action").value,
+    amount: document.getElementById("balance-amount").value,
+    note: document.getElementById("balance-note").value || undefined,
+  };
+
+  try {
+    const res = await fetch("/api/balance", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+    msg.textContent = `${body.action === "deposit" ? "Deposited" : "Withdrew"} ${body.amount}.`;
+    msg.className = "form-message success";
+    document.getElementById("balance-form").reset();
+    renderAllFromSnapshot(data.portfolio);
+  } catch (err) {
+    msg.textContent = err.message;
+    msg.className = "form-message error";
+  }
+});
+
+function renderAllFromSnapshot(snapshot) {
+  if (!snapshot) return;
+  renderSummary(snapshot);
+  renderAllocationChart(snapshot);
+  renderProfitChart(snapshot);
+  renderHoldingsTable(snapshot);
+  renderFundHistoryGrid(snapshot);
+  renderFundDetails(snapshot);
+  renderBalance(snapshot);
+  renderTransactions(snapshot);
+}
+
+// ---- News & AI insights ---------------------------------------------------
+
+function renderNews(data) {
+  const list = document.getElementById("news-list");
+  const articles = data.articles || [];
+  if (articles.length === 0) {
+    list.innerHTML = `<p class="holdings-unavailable">No headlines available right now.</p>`;
+  } else {
+    list.innerHTML = articles
+      .slice(0, 40)
+      .map(
+        (a) => `<div class="news-item">
+          <a href="${a.link}" target="_blank" rel="noopener">${a.title}</a>
+          <div class="news-meta">${a.source}${a.publishedAt ? " · " + new Date(a.publishedAt).toLocaleString("tr-TR") : ""}</div>
+          ${a.summary ? `<div class="news-summary">${a.summary}</div>` : ""}
+        </div>`
+      )
+      .join("");
+  }
+  if (data.sourceErrors && data.sourceErrors.length > 0) {
+    list.innerHTML += `<p class="holdings-unavailable">Unavailable right now: ${data.sourceErrors.map((e) => e.source).join(", ")}.</p>`;
+  }
+}
+
+function renderInsights(data) {
+  const body = document.getElementById("insights-body");
+  const warningsBox = document.getElementById("warnings-box");
+  const warningsList = document.getElementById("warnings-list");
+  const analyzeBtn = document.getElementById("analyze-btn");
+
+  if (!data.available) {
+    body.innerHTML = `<p class="hint">AI analysis isn't set up. Set the <code>ANTHROPIC_API_KEY</code> environment variable and restart the server to enable it — see the README for cost details. It's entirely optional.</p>`;
+    warningsBox.hidden = true;
+    analyzeBtn.disabled = true;
+    return;
+  }
+
+  analyzeBtn.disabled = false;
+
+  if (data.error) {
+    body.innerHTML = `<p class="holdings-unavailable">AI analysis failed: ${data.error}</p>`;
+    warningsBox.hidden = true;
+    return;
+  }
+
+  const predictionsHtml = (data.predictions || [])
+    .map((p) => `<li><span class="prediction-topic">${p.topic}:</span> ${p.outlook}</li>`)
+    .join("");
+
+  body.innerHTML = `
+    <p>${data.marketSummary || "No summary available yet."}</p>
+    ${predictionsHtml ? `<ul class="predictions-list">${predictionsHtml}</ul>` : ""}
+    <p class="ai-disclaimer">AI-generated from public headlines — not financial advice, and may be wrong. Last analyzed: ${data.generatedAt ? new Date(data.generatedAt).toLocaleString("tr-TR") : "—"}.</p>
+  `;
+
+  const warnings = data.warnings || [];
+  if (warnings.length > 0) {
+    warningsBox.hidden = false;
+    warningsList.innerHTML = warnings
+      .map(
+        (w) => `<div class="warning-item">
+          <span class="severity-badge severity-${w.severity || "medium"}">${w.severity || "medium"}</span>
+          <span class="warning-sector">${w.sector}:</span> ${w.message}
+        </div>`
+      )
+      .join("");
+  } else {
+    warningsBox.hidden = true;
+  }
+}
+
+async function loadNews() {
+  try {
+    const res = await fetch("/api/news");
+    renderNews(await res.json());
+  } catch {
+    document.getElementById("news-list").innerHTML = `<p class="holdings-unavailable">News unavailable.</p>`;
+  }
+}
+
+async function loadInsights() {
+  try {
+    const res = await fetch("/api/insights");
+    renderInsights(await res.json());
+  } catch {
+    document.getElementById("insights-body").innerHTML = `<p class="holdings-unavailable">AI analysis unavailable.</p>`;
+  }
+}
+
+document.getElementById("analyze-btn").addEventListener("click", async () => {
+  const btn = document.getElementById("analyze-btn");
+  btn.disabled = true;
+  btn.textContent = "Analyzing…";
+  try {
+    const res = await fetch("/api/insights/refresh", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    renderInsights(data.insights);
+  } catch (err) {
+    document.getElementById("insights-body").innerHTML = `<p class="holdings-unavailable">${err.message}</p>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Analyze now";
+  }
+});
+
 // ---- Orchestration ------------------------------------------------------
 
 let firstLoadSucceeded = false;
@@ -251,12 +472,7 @@ async function loadPortfolio() {
     firstLoadSucceeded = true;
     errorBanner.hidden = true;
     errorBanner.className = "error-banner";
-    renderSummary(snapshot);
-    renderAllocationChart(snapshot);
-    renderProfitChart(snapshot);
-    renderHoldingsTable(snapshot);
-    renderFundHistoryGrid(snapshot);
-    renderFundDetails(snapshot);
+    renderAllFromSnapshot(snapshot);
   } catch (err) {
     errorBanner.hidden = false;
     errorBanner.className = "error-banner";
@@ -278,17 +494,19 @@ async function loadStatus() {
 }
 
 async function refreshAll() {
-  await Promise.all([loadPortfolio(), loadMarket(), loadStatus()]);
+  await Promise.all([loadPortfolio(), loadMarket(), loadStatus(), loadNews(), loadInsights()]);
 }
 
 document.getElementById("refresh-btn").addEventListener("click", async () => {
-  await fetch("/api/refresh", { method: "POST" });
+  await fetch("/api/refresh", { method: "POST" }); // never triggers the paid AI analysis, see server.js
   await refreshAll();
 });
 
 refreshAll();
 setInterval(loadMarket, 30 * 1000);
 setInterval(loadStatus, 30 * 1000);
+setInterval(loadNews, 5 * 60 * 1000);
+setInterval(loadInsights, 5 * 60 * 1000); // just re-reads the cache; AI itself only (re)runs server-side on its own slow schedule or "Analyze now"
 
 // Poll quickly until the first refresh lands (it can take a few minutes
 // due to TEFAS's rate limit), then settle into the normal slow cadence —

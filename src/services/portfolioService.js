@@ -16,6 +16,25 @@ function loadPortfolioConfig() {
   return JSON.parse(raw);
 }
 
+// The single place that writes data/portfolio.json. Every writer (trades,
+// balance changes, this module's own label-backfill below) goes through
+// this queue so two writes can never race and clobber each other.
+let writeQueue = Promise.resolve();
+function writePortfolioConfig(mutateFn) {
+  const result = writeQueue.then(() => {
+    const config = loadPortfolioConfig();
+    const returnValue = mutateFn(config);
+    fs.writeFileSync(PORTFOLIO_PATH, JSON.stringify(config, null, 2) + "\n", "utf8");
+    return returnValue;
+  });
+  writeQueue = result.catch(() => {}); // one failed write must not wedge the queue
+  return result;
+}
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
 function summarizeLots(lots) {
   const quantity = lots.reduce((sum, lot) => sum + lot.quantity, 0);
   const cost = lots.reduce((sum, lot) => sum + lot.quantity * lot.price, 0);
@@ -35,17 +54,32 @@ async function mapWithConcurrency(items, limit, fn) {
   return results;
 }
 
-async function loadFund(fund) {
+async function loadFund(fund, cachedFund) {
   const { quantity, cost, avgCost } = summarizeLots(fund.lots);
 
-  const [history, allocation, holdings] = await Promise.all([
-    fetchFundHistory(fund.code).catch((err) => ({ error: err.message, rows: [] })),
-    fetchFundAllocation(fund.code).catch((err) => ({ error: err.message, slices: [] })),
-    fetchFundHoldings(fund.code).catch((err) => ({ ok: false, error: err.message, holdings: [] })),
-  ]);
+  let historyRows, historyError, allocationSlices, allocationAsOf, holdings;
 
-  const historyRows = Array.isArray(history) ? history : history.rows || [];
-  const historyError = Array.isArray(history) ? null : history.error;
+  if (cachedFund && cachedFund.priced) {
+    // Reuse the last successfully-fetched TEFAS/Fintables data instead of
+    // re-fetching. Used right after a trade so buying/selling a fund that
+    // was already priced updates instantly instead of waiting through
+    // TEFAS's rate limit again for every other unrelated fund.
+    historyRows = (cachedFund.priceHistory || []).map((r) => ({ date: new Date(r.date), price: r.price }));
+    historyError = null;
+    allocationSlices = { slices: cachedFund.allocation, asOf: cachedFund.allocationAsOf };
+    holdings = cachedFund.holdings;
+  } else {
+    const [history, allocation, holdingsResult] = await Promise.all([
+      fetchFundHistory(fund.code).catch((err) => ({ error: err.message, rows: [] })),
+      fetchFundAllocation(fund.code).catch((err) => ({ error: err.message, slices: [] })),
+      fetchFundHoldings(fund.code).catch((err) => ({ ok: false, error: err.message, holdings: [] })),
+    ]);
+    historyRows = Array.isArray(history) ? history : history.rows || [];
+    historyError = Array.isArray(history) ? null : history.error;
+    allocationSlices = allocation;
+    holdings = holdingsResult;
+  }
+
   const latest = historyRows[historyRows.length - 1] || null;
   const currentPrice = latest ? latest.price : null;
   const currentValue = currentPrice != null ? currentPrice * quantity : null;
@@ -65,8 +99,8 @@ async function loadFund(fund) {
     priced: currentPrice != null,
     priceHistory: historyRows.map((r) => ({ date: r.date, price: r.price })),
     historyError,
-    allocation: allocation.slices || [],
-    allocationAsOf: allocation.asOf || null,
+    allocation: allocationSlices.slices || [],
+    allocationAsOf: allocationSlices.asOf || null,
     holdings,
   };
 }
@@ -75,12 +109,42 @@ async function loadFund(fund) {
  * Refresh price history + allocation + holdings for every fund in
  * data/portfolio.json, and compute current value / profit per fund and for
  * the portfolio as a whole.
+ *
+ * @param {{ reuseFrom?: object }} opts - `reuseFrom` is a previous snapshot
+ *   (typically the current server-side cache) whose already-priced funds
+ *   are reused instead of re-fetched from TEFAS. Used right after a trade
+ *   so the UI reflects it in seconds instead of waiting through TEFAS's
+ *   rate limit for every fund again; the regular scheduled refresh omits
+ *   this so every fund's data still gets fully re-verified periodically.
  */
-async function buildPortfolioSnapshot() {
+async function buildPortfolioSnapshot({ reuseFrom } = {}) {
   const config = loadPortfolioConfig();
   const currency = config.currency || "TRY";
+  const cashBalance = typeof config.cashBalance === "number" ? config.cashBalance : 0;
+  const transactions = Array.isArray(config.transactions)
+    ? [...config.transactions].sort((a, b) => new Date(b.date) - new Date(a.date))
+    : [];
 
-  const funds = await mapWithConcurrency(config.funds, FUND_FETCH_CONCURRENCY, loadFund);
+  const cachedByCode = new Map((reuseFrom?.funds || []).map((f) => [f.code, f]));
+  const funds = await mapWithConcurrency(config.funds, FUND_FETCH_CONCURRENCY, (fund) =>
+    loadFund(fund, cachedByCode.get(fund.code))
+  );
+
+  // A fund bought by code before TEFAS ever resolved its real title only
+  // has the code as its label; once a fresh fetch resolves the title,
+  // persist it so it doesn't show as just the code forever.
+  const resolvedLabels = funds
+    .filter((f) => f.label !== f.code && f.label)
+    .map((f) => [f.code, f.label]);
+  if (resolvedLabels.length > 0) {
+    await writePortfolioConfig((cfg) => {
+      const labelByCode = new Map(resolvedLabels);
+      for (const cfgFund of cfg.funds) {
+        const resolved = labelByCode.get(cfgFund.code);
+        if (resolved && cfgFund.label !== resolved) cfgFund.label = resolved;
+      }
+    }).catch(() => {}); // best-effort — the in-memory snapshot below is correct either way
+  }
 
   // Funds TEFAS couldn't be reached for fall back to cost basis so totals
   // still render, but they're tracked separately so the UI can say clearly
@@ -109,9 +173,15 @@ async function buildPortfolioSnapshot() {
       profitPercent: totalProfitPercent,
       unpricedFunds,
     },
+    balance: {
+      cash: cashBalance,
+      fundsValue: totalValue,
+      netWorth: round2(cashBalance + totalValue),
+    },
+    transactions,
     allocationByFund,
     funds,
   };
 }
 
-module.exports = { buildPortfolioSnapshot, loadPortfolioConfig, PORTFOLIO_PATH };
+module.exports = { buildPortfolioSnapshot, loadPortfolioConfig, writePortfolioConfig, PORTFOLIO_PATH };

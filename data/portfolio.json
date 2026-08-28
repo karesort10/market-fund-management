@@ -1,82 +1,132 @@
 {
   "currency": "TRY",
+  "cashBalance": 0,
+  "transactions": [],
   "funds": [
     {
       "code": "CPU",
       "label": "Aktif Portföy Teknoloji Katılım Fonu",
       "lots": [
-        { "date": "2026-08-24", "quantity": 255, "price": 3.914339 }
+        {
+          "date": "2026-08-24",
+          "quantity": 255,
+          "price": 3.914339
+        }
       ]
     },
     {
       "code": "KTJ",
       "label": "Kuveyt Türk Portföy Teknoloji Katılım Fonu",
       "lots": [
-        { "date": "2026-08-24", "quantity": 381, "price": 2.619320 }
+        {
+          "date": "2026-08-24",
+          "quantity": 381,
+          "price": 2.61932
+        }
       ]
     },
     {
       "code": "KPA",
       "label": "Kuveyt Türk Portföy Kar Payı Ödeyen Katılım Hisse Senedi Fonu",
       "lots": [
-        { "date": "2026-08-24", "quantity": 559, "price": 1.786415 }
+        {
+          "date": "2026-08-24",
+          "quantity": 559,
+          "price": 1.786415
+        }
       ]
     },
     {
       "code": "IJB",
       "label": "İş Portföy Dijital Oyun Sektörü Karma Fon",
       "lots": [
-        { "date": "2026-08-18", "quantity": 150, "price": 6.663625 },
-        { "date": "2026-08-24", "quantity": 149, "price": 6.690478 }
+        {
+          "date": "2026-08-18",
+          "quantity": 150,
+          "price": 6.663625
+        },
+        {
+          "date": "2026-08-24",
+          "quantity": 149,
+          "price": 6.690478
+        }
       ]
     },
     {
       "code": "PRY",
       "label": "Pusula Portföy Para Piyasası (TL) Fonu",
       "lots": [
-        { "date": "2026-08-25", "quantity": 1000, "price": 3.186683 }
+        {
+          "date": "2026-08-25",
+          "quantity": 1000,
+          "price": 3.186683
+        }
       ]
     },
     {
       "code": "SSS",
       "label": "Yapı Kredi Portföy Hisse Senedi Stratejisi Fonu",
       "lots": [
-        { "date": "2026-08-26", "quantity": 700, "price": 1.427040 }
+        {
+          "date": "2026-08-26",
+          "quantity": 700,
+          "price": 1.42704
+        }
       ]
     },
     {
       "code": "AYA",
       "label": "Ata Portföy Kar Payı Ödeyen Hisse Senedi (TL) Fonu",
       "lots": [
-        { "date": "2026-08-26", "quantity": 33, "price": 19.012416 }
+        {
+          "date": "2026-08-26",
+          "quantity": 33,
+          "price": 19.012416
+        }
       ]
     },
     {
       "code": "BFT",
       "label": "Azimut Portföy Banka ve Finans Sektörü Hisse Senedi Fonu",
       "lots": [
-        { "date": "2026-08-18", "quantity": 1000, "price": 1.122534 }
+        {
+          "date": "2026-08-18",
+          "quantity": 1000,
+          "price": 1.122534
+        }
       ]
     },
     {
       "code": "GSP",
       "label": "Azimut Portföy Kar Payı Ödeyen Hisse Senedi Fonu",
       "lots": [
-        { "date": "2026-08-18", "quantity": 889, "price": 0.562028 }
+        {
+          "date": "2026-08-18",
+          "quantity": 889,
+          "price": 0.562028
+        }
       ]
     },
     {
       "code": "APJ",
       "label": "Ak Portföy BIST Şirketleri Fon Sepeti Fonu",
       "lots": [
-        { "date": "2026-08-18", "quantity": 148, "price": 6.751577 }
+        {
+          "date": "2026-08-18",
+          "quantity": 148,
+          "price": 6.751577
+        }
       ]
     },
     {
       "code": "GUM",
       "label": "Ak Portföy Gümüş Fon Sepeti Fonu",
       "lots": [
-        { "date": "2026-08-18", "quantity": 79, "price": 12.603547 }
+        {
+          "date": "2026-08-18",
+          "quantity": 79,
+          "price": 12.603547
+        }
       ]
     }
   ]

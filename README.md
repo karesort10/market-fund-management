@@ -2,9 +2,9 @@
 
 A small, locally-hosted dashboard for tracking a portfolio of Turkish
 mutual funds (TEFAS-listed). It shows current value, profit/loss, a
-per-fund price chart, a portfolio allocation pie chart, and a second tab
-with each fund's asset-class composition and (best effort) underlying
-equity holdings.
+per-fund price chart, a portfolio allocation pie chart, a tab for each
+fund's sector composition and underlying holdings, buy/sell trading with
+a cash balance, and a news + optional AI market-analysis tab.
 
 ## What it does
 
@@ -21,6 +21,18 @@ equity holdings.
     as a pie chart, sourced from TEFAS
   - Each fund's top underlying equities (e.g. which BIST stocks a fund
     holds), sourced from Fintables, when available
+- **Trade tab** — buy or sell a fund by its TEFAS code. Buying a code you
+  don't already hold adds it to your portfolio automatically (its real
+  name fills in once TEFAS resolves it); selling consumes your oldest
+  purchases first (FIFO) and reports realized profit/loss.
+- **Balance tab** — cash balance, total funds value, and net worth;
+  deposit or withdraw cash (buying a fund draws from this balance,
+  selling credits back to it); full transaction history.
+- **News & Insights tab** — headlines aggregated from trusted financial
+  outlets, an optional AI market-analysis summary, and a prominent
+  critical-warnings section for conflicts or major news relevant to the
+  specific sectors your funds are actually exposed to. See below — this
+  part is opt-in and costs a small amount of money if enabled.
 
 ## Data sources
 
@@ -29,6 +41,8 @@ equity holdings.
 | [TEFAS](https://www.tefas.gov.tr) `api/funds/fonGnlBlgSiraliGetir` / `dagilimSiraliGetirT` | Fund NAV history, asset-class allocation | TEFAS retired its older `BindHistoryInfo`/`BindHistoryAllocation` API in 2026; this uses the JSON gateway that replaced it (undocumented officially, but the same one actively-maintained community TEFAS clients use). No API key, but **rate-limited to roughly 6 requests/minute** — see below. |
 | [Yahoo Finance](https://finance.yahoo.com) chart API | BIST 100 / USDTRY / EURTRY / gold ticker | Public, unauthenticated, widely used. |
 | [Fintables](https://fintables.com) fund pages | Individual equity holdings per fund | **Best effort.** Fintables has no documented public API, so this scrapes the rendered page. If Fintables changes their markup, this can stop finding data — the UI will show "unavailable" instead of breaking, and a link to the page is always shown as a fallback. |
+| Bloomberg HT, Dünya Gazetesi, Anadolu Ajansı, Investing.com (RSS) | News tab headlines | Public RSS feeds, no API key. A feed that's down or has moved is dropped from the merged list rather than failing the whole News tab — see `src/services/news.js` if a source stops showing up. |
+| Anthropic API (Claude) | Optional AI market analysis | Opt-in, requires your own `ANTHROPIC_API_KEY` — see **AI market analysis** below. |
 
 TEFAS publishes fund prices **once per trading day** (after markets
 close), so "real-time" for fund NAVs means "refreshed as often as TEFAS
@@ -92,12 +106,58 @@ The server re-reads this file on every scheduled refresh, so changes take
 effect within one refresh cycle (or immediately via the "Refresh now"
 button).
 
+## Trading and cash balance
+
+Use the **Trade** tab instead of hand-editing `portfolio.json` once you're
+up and running — buying/selling writes to the same file, so both stay in
+sync. Deposit cash in the **Balance** tab before buying (buying validates
+you have enough cash; there's no implicit "infinite money"). Every trade
+and balance change is logged in `transactions` and shown in the Balance
+tab's history, including realized profit/loss on sells.
+
+A trade or balance change updates the dashboard within a few seconds if
+the portfolio has already loaded once — it reuses already-fetched TEFAS
+data for funds you already hold rather than waiting through the rate
+limit again, and only does a real (fast, single-fund) TEFAS fetch for a
+brand-new fund code. Right at server startup, before the first load has
+completed at all, a trade is still saved instantly but the dashboard
+won't reflect it until that initial load finishes.
+
+## News & AI market analysis
+
+The **News & Insights** tab always shows headlines (free, no setup). The
+AI analysis part of that tab — a plain-language market summary, short
+per-sector predictions, and a critical-warnings box for conflicts or
+major news relevant to *your specific funds* — is entirely optional and
+disabled by default.
+
+To enable it:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... npm start
+```
+
+**Cost**: this calls Claude (Haiku, Anthropic's cheapest model) with your
+fund list and recent headlines, capped at ~1000 output tokens per call.
+Left on its default schedule (every 6 hours, configurable via
+`AI_REFRESH_MS`), that's 4 calls/day — a small fraction of a cent each,
+so well under $1/month at default cost as of this writing. Clicking
+"Analyze now" runs one extra call on demand. Every other feature in this
+app (TEFAS, Yahoo Finance, Fintables, RSS) is completely free — this is
+the only paid piece, billed to your own Anthropic account, and the app
+works fully without it (that tab just shows a "not configured" message
+in the AI section, headlines still work).
+
+This is a convenience summary of public headlines, not financial advice,
+and the model can be wrong — treat predictions and warnings as a prompt
+to go read the news yourself, not as a signal to act on directly.
+
 ## Refresh intervals
 
 Configurable via environment variables:
 
 ```bash
-PORTFOLIO_REFRESH_MS=300000 MARKET_REFRESH_MS=60000 npm start
+PORTFOLIO_REFRESH_MS=300000 MARKET_REFRESH_MS=60000 NEWS_REFRESH_MS=1800000 AI_REFRESH_MS=21600000 npm start
 ```
 
 ## Notes / limitations
