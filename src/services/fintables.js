@@ -14,9 +14,23 @@
 // `HOLDING_ROW_SELECTORS` below to match the new page.
 const cheerio = require("cheerio");
 
+// Fintables returns 403 to anything that self-identifies as a script, so
+// these mirror what a real browser sends. This is a public page a browser
+// can load unauthenticated; the goal is to look like a normal reader, not
+// to defeat a login or paywall. If Fintables adds a genuine JS/captcha
+// challenge, no header set will get past it — the UI degrades to a link
+// to the page instead (see the return shape below).
 const HEADERS = {
-  "User-Agent": "Mozilla/5.0 (compatible; market-fund-management/1.0)",
-  Accept: "text/html",
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+  "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+  "Cache-Control": "no-cache",
+  Pragma: "no-cache",
+  "Sec-Fetch-Dest": "document",
+  "Sec-Fetch-Mode": "navigate",
+  "Sec-Fetch-Site": "none",
+  "Upgrade-Insecure-Requests": "1",
 };
 
 const REQUEST_TIMEOUT_MS = 15 * 1000;

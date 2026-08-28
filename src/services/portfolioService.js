@@ -11,6 +11,12 @@ const PORTFOLIO_PATH = path.join(__dirname, "..", "..", "data", "portfolio.json"
 // funds in small batches instead of all-at-once.
 const FUND_FETCH_CONCURRENCY = 3;
 
+// How long a successfully-fetched asset allocation / holdings breakdown is
+// reused before being re-fetched. This data changes on the order of weeks,
+// while prices change daily, so re-pulling it every refresh cycle would
+// roughly double every refresh's cost for nothing.
+const COMPOSITION_TTL_MS = 12 * 60 * 60 * 1000;
+
 function loadPortfolioConfig() {
   const raw = fs.readFileSync(PORTFOLIO_PATH, "utf8");
   return JSON.parse(raw);
@@ -54,36 +60,87 @@ async function mapWithConcurrency(items, limit, fn) {
   return results;
 }
 
-async function loadFund(fund, cachedFund) {
+function isFresh(timestamp, ttlMs) {
+  if (!timestamp) return false;
+  return Date.now() - new Date(timestamp).getTime() < ttlMs;
+}
+
+async function loadFund(fund, cachedFund, { reusePrices = false } = {}) {
   const { quantity, cost, avgCost } = summarizeLots(fund.lots);
+  const now = new Date().toISOString();
 
-  let historyRows, historyError, allocationSlices, allocationError, holdings;
+  // Price, allocation and holdings are fetched in parallel. TEFAS's own
+  // two calls get serialized by that module's rate-limit queue anyway, but
+  // Fintables is a different host with no such queue, so running them
+  // together still saves real time.
+  const [priceResult, allocationResult, holdingsResult] = await Promise.all([
+    (async () => {
+      // Reused only right after a trade, so buying/selling a fund that was
+      // already priced reflects instantly instead of waiting through
+      // TEFAS's rate limit again for every unrelated fund. Scheduled
+      // refreshes always re-fetch, since the NAV is the whole point.
+      if (reusePrices && cachedFund && cachedFund.priced) {
+        return {
+          rows: (cachedFund.priceHistory || []).map((r) => ({ date: new Date(r.date), price: r.price })),
+          error: null,
+        };
+      }
+      const history = await fetchFundHistory(fund.code).catch((err) => ({ error: err.message, rows: [] }));
+      return {
+        rows: Array.isArray(history) ? history : history.rows || [],
+        error: Array.isArray(history) ? null : history.error,
+      };
+    })(),
 
-  if (cachedFund && cachedFund.priced) {
-    // Reuse the last successfully-fetched TEFAS/Fintables data instead of
-    // re-fetching. Used right after a trade so buying/selling a fund that
-    // was already priced updates instantly instead of waiting through
-    // TEFAS's rate limit again for every other unrelated fund.
-    historyRows = (cachedFund.priceHistory || []).map((r) => ({ date: new Date(r.date), price: r.price }));
-    historyError = null;
-    allocationSlices = { slices: cachedFund.allocation, asOf: cachedFund.allocationAsOf };
-    allocationError = cachedFund.allocationError || null;
-    holdings = cachedFund.holdings;
-  } else {
-    const [history, allocation, holdingsResult] = await Promise.all([
-      fetchFundHistory(fund.code).catch((err) => ({ error: err.message, rows: [] })),
-      fetchFundAllocation(fund.code).catch((err) => ({ error: err.message, slices: [] })),
-      fetchFundHoldings(fund.code).catch((err) => ({ ok: false, error: err.message, holdings: [] })),
-    ]);
-    historyRows = Array.isArray(history) ? history : history.rows || [];
-    historyError = Array.isArray(history) ? null : history.error;
-    allocationSlices = allocation;
-    // fetchFundAllocation resolves even on success with zero rows (e.g. a
-    // fund TEFAS just has no allocation breakdown for), which isn't an
-    // error — only surface .error, never invent one from an empty result.
-    allocationError = allocation.error || null;
-    holdings = holdingsResult;
-  }
+    (async () => {
+      // Asset allocation is TEFAS's slowest endpoint and its slowest-moving
+      // data (funds report composition periodically, not per-tick), so a
+      // successful result is reused for COMPOSITION_TTL_MS instead of being
+      // re-fetched on every 10-minute cycle. A failed or empty one is NOT
+      // cached, so a timeout retries on the next refresh rather than
+      // leaving the tab empty for half a day.
+      if (cachedFund && (cachedFund.allocation || []).length > 0 && isFresh(cachedFund.allocationFetchedAt, COMPOSITION_TTL_MS)) {
+        return {
+          slices: cachedFund.allocation,
+          asOf: cachedFund.allocationAsOf,
+          error: null,
+          fetchedAt: cachedFund.allocationFetchedAt,
+        };
+      }
+      const allocation = await fetchFundAllocation(fund.code).catch((err) => ({ error: err.message, slices: [] }));
+      return {
+        slices: allocation.slices || [],
+        asOf: allocation.asOf || null,
+        // fetchFundAllocation resolves successfully with zero rows when
+        // TEFAS simply publishes no breakdown for a fund; that is not an
+        // error, so never invent one from an empty result.
+        error: allocation.error || null,
+        fetchedAt: allocation.error ? null : now,
+      };
+    })(),
+
+    (async () => {
+      // Same success-cached / failure-retried rule as allocation — also
+      // keeps this from re-scraping Fintables every few minutes.
+      if (cachedFund && cachedFund.holdings?.ok && isFresh(cachedFund.holdingsFetchedAt, COMPOSITION_TTL_MS)) {
+        return { holdings: cachedFund.holdings, fetchedAt: cachedFund.holdingsFetchedAt };
+      }
+      const holdings = await fetchFundHoldings(fund.code).catch((err) => ({
+        ok: false,
+        error: err.message,
+        holdings: [],
+      }));
+      return { holdings, fetchedAt: holdings.ok ? now : null };
+    })(),
+  ]);
+
+  const historyRows = priceResult.rows;
+  const historyError = priceResult.error;
+  const allocationSlices = { slices: allocationResult.slices, asOf: allocationResult.asOf };
+  const allocationError = allocationResult.error;
+  const allocationFetchedAt = allocationResult.fetchedAt;
+  const holdings = holdingsResult.holdings;
+  const holdingsFetchedAt = holdingsResult.fetchedAt;
 
   const latest = historyRows[historyRows.length - 1] || null;
   const currentPrice = latest ? latest.price : null;
@@ -107,7 +164,9 @@ async function loadFund(fund, cachedFund) {
     allocation: allocationSlices.slices || [],
     allocationAsOf: allocationSlices.asOf || null,
     allocationError,
+    allocationFetchedAt,
     holdings,
+    holdingsFetchedAt,
   };
 }
 
@@ -116,14 +175,15 @@ async function loadFund(fund, cachedFund) {
  * data/portfolio.json, and compute current value / profit per fund and for
  * the portfolio as a whole.
  *
- * @param {{ reuseFrom?: object }} opts - `reuseFrom` is a previous snapshot
- *   (typically the current server-side cache) whose already-priced funds
- *   are reused instead of re-fetched from TEFAS. Used right after a trade
- *   so the UI reflects it in seconds instead of waiting through TEFAS's
- *   rate limit for every fund again; the regular scheduled refresh omits
- *   this so every fund's data still gets fully re-verified periodically.
+ * @param {{ reuseFrom?: object, reusePrices?: boolean }} opts
+ *   `reuseFrom` is a previous snapshot (typically the server-side cache)
+ *   to reuse slow-moving data from. Pass it on scheduled refreshes too:
+ *   prices are still re-fetched, but a recent allocation/holdings result
+ *   is reused rather than re-pulled every cycle (see COMPOSITION_TTL_MS).
+ *   `reusePrices` additionally reuses cached prices, for the near-instant
+ *   refresh right after a trade.
  */
-async function buildPortfolioSnapshot({ reuseFrom } = {}) {
+async function buildPortfolioSnapshot({ reuseFrom, reusePrices = false } = {}) {
   const config = loadPortfolioConfig();
   const currency = config.currency || "TRY";
   const cashBalance = typeof config.cashBalance === "number" ? config.cashBalance : 0;
@@ -133,7 +193,7 @@ async function buildPortfolioSnapshot({ reuseFrom } = {}) {
 
   const cachedByCode = new Map((reuseFrom?.funds || []).map((f) => [f.code, f]));
   const funds = await mapWithConcurrency(config.funds, FUND_FETCH_CONCURRENCY, (fund) =>
-    loadFund(fund, cachedByCode.get(fund.code))
+    loadFund(fund, cachedByCode.get(fund.code), { reusePrices })
   );
 
   // A fund bought by code before TEFAS ever resolved its real title only

@@ -40,7 +40,7 @@ a cash balance, and a news + optional AI market-analysis tab.
 |---|---|---|
 | [TEFAS](https://www.tefas.gov.tr) `api/funds/fonGnlBlgSiraliGetir` / `dagilimSiraliGetirT` | Fund NAV history, asset-class allocation | TEFAS retired its older `BindHistoryInfo`/`BindHistoryAllocation` API in 2026; this uses the JSON gateway that replaced it (undocumented officially, but the same one actively-maintained community TEFAS clients use). No API key, but **rate-limited to roughly 6 requests/minute** — see below. |
 | [Yahoo Finance](https://finance.yahoo.com) chart API | BIST 100 / USDTRY / EURTRY / gold ticker | Public, unauthenticated, widely used. |
-| [Fintables](https://fintables.com) fund pages | Individual equity holdings per fund | **Best effort.** Fintables has no documented public API, so this scrapes the rendered page. If Fintables changes their markup, this can stop finding data — the UI will show "unavailable" instead of breaking, and a link to the page is always shown as a fallback. |
+| [Fintables](https://fintables.com) fund pages | Individual equity holdings per fund | **Best effort, and often blocked.** TEFAS's API publishes only asset-*class* percentages (stocks 80%, repo 20%), never the individual stock names, so this is the only route to "which shares does my fund actually hold" — and it means scraping, since Fintables has no public API. Fintables frequently answers automated requests with **HTTP 403**; when that happens the UI says so per fund and links to the page so you can read it directly. Everything else on that tab still works. |
 | Bloomberg HT, Dünya Gazetesi, Anadolu Ajansı, Investing.com (RSS) | News tab headlines | Public RSS feeds, no API key. A feed that's down or has moved is dropped from the merged list rather than failing the whole News tab — see `src/services/news.js` if a source stops showing up. |
 | Anthropic API (Claude) | Optional AI market analysis | Opt-in, requires your own `ANTHROPIC_API_KEY` — see **AI market analysis** below. |
 
@@ -181,3 +181,15 @@ PORTFOLIO_REFRESH_MS=300000 MARKET_REFRESH_MS=60000 NEWS_REFRESH_MS=1800000 AI_R
 - If a request to TEFAS, Yahoo Finance, or Fintables fails (network issue,
   changed API), that one panel shows an "unavailable" message instead of
   taking down the rest of the dashboard.
+- **Fund Sector & Holdings tab.** The pie chart (asset classes) comes from
+  TEFAS; the equity list under it comes from Fintables and is the part
+  most likely to read "unavailable: HTTP 403" — see the data-sources table
+  above. Both now state the specific reason rather than rendering blank.
+  Asset allocation and holdings are re-fetched at most once every 12 hours
+  (they change on the order of weeks, unlike prices), so they don't slow
+  down every refresh cycle; a *failed* fetch is never cached, so it retries
+  on the next cycle rather than staying broken for half a day.
+- Chart.js is served locally from `node_modules` rather than a CDN, so the
+  dashboard works offline and isn't broken by ad blockers. If the charting
+  library ever fails to load anyway, each chart degrades to a short note
+  and the surrounding tables/lists still render.

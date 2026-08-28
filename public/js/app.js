@@ -15,8 +15,20 @@ const charts = {}; // canvas id -> Chart instance, so re-renders destroy the old
 function renderChart(canvasId, config) {
   const el = document.getElementById(canvasId);
   if (!el) return;
-  if (charts[canvasId]) charts[canvasId].destroy();
-  charts[canvasId] = new Chart(el, config);
+  // A chart that can't be drawn must never take the rest of the page with
+  // it: every panel here renders text (holdings, prices, error reasons)
+  // alongside its chart, and callers render many charts in a loop, so one
+  // throw used to abort the whole dashboard render.
+  try {
+    if (typeof Chart === "undefined") throw new Error("charting library failed to load");
+    if (charts[canvasId]) charts[canvasId].destroy();
+    charts[canvasId] = new Chart(el, config);
+  } catch (err) {
+    const note = document.createElement("p");
+    note.className = "holdings-unavailable";
+    note.textContent = `Chart unavailable: ${err.message}`;
+    el.replaceWith(note);
+  }
 }
 
 // ---- Tabs -----------------------------------------------------------

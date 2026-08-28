@@ -25,6 +25,10 @@ const BASE_URL = "https://www.tefas.gov.tr";
 const INFO_PATH = "/api/funds/fonGnlBlgSiraliGetir";
 const ALLOCATION_PATH = "/api/funds/dagilimSiraliGetirT";
 const REQUEST_TIMEOUT_MS = 15 * 1000;
+// dagilimSiraliGetirT returns 50+ asset-class columns per row and is much
+// slower to respond than the ~9-column price endpoint, routinely taking
+// longer than the standard timeout allows. It gets its own, longer one.
+const ALLOCATION_TIMEOUT_MS = 45 * 1000;
 const MIN_REQUEST_INTERVAL_MS = 10 * 1000; // ~6 requests/minute
 
 const DEFAULT_HEADERS = {
@@ -79,13 +83,13 @@ function buildBody(fonTipi, fonKodu, start, end) {
   };
 }
 
-async function postJson(path, body) {
+async function postJson(path, body, { timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
   return throttled(async () => {
     const res = await fetch(`${BASE_URL}${path}`, {
       method: "POST",
       headers: DEFAULT_HEADERS,
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     const text = await res.text();
@@ -179,12 +183,19 @@ function prettifyKey(key) {
  *
  * @returns {Promise<{ asOf: Date|null, slices: Array<{label: string, percent: number}> }>}
  */
-async function fetchFundAllocation(fundCode, { days = 27 } = {}) {
+async function fetchFundAllocation(fundCode, { days = 10 } = {}) {
   const end = new Date();
   const start = new Date();
+  // Only the single most recent row is ever used, so this asks for a short
+  // window rather than a month of 50+ column rows — far less for TEFAS's
+  // slowest endpoint to build and send. It still has to be wide enough to
+  // clear a long weekend plus TEFAS's own publishing lag, hence ~10 days
+  // rather than 1 or 2.
   start.setDate(start.getDate() - days);
 
-  const rows = await postJson(ALLOCATION_PATH, buildBody("YAT", fundCode, start, end));
+  const rows = await postJson(ALLOCATION_PATH, buildBody("YAT", fundCode, start, end), {
+    timeoutMs: ALLOCATION_TIMEOUT_MS,
+  });
 
   if (rows.length === 0) {
     return { asOf: null, slices: [] };

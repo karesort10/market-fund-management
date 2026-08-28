@@ -27,6 +27,10 @@ const AI_REFRESH_MS = Number(process.env.AI_REFRESH_MS) || 6 * 60 * 60 * 1000;
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
+// Chart.js is served from node_modules rather than a CDN: this is a local
+// tool, and a blocked/slow CDN (ad blocker, offline, corporate proxy) used
+// to leave the page with no charting library at all.
+app.use("/vendor/chartjs", express.static(path.join(__dirname, "node_modules/chart.js/dist")));
 
 const cache = {
   portfolio: null,
@@ -42,7 +46,10 @@ const cache = {
 
 async function refreshPortfolio() {
   try {
-    cache.portfolio = await buildPortfolioSnapshot();
+    // Passes the existing cache so a recently-fetched asset allocation /
+    // holdings breakdown is reused rather than re-pulled every cycle
+    // (prices are always re-fetched). See COMPOSITION_TTL_MS.
+    cache.portfolio = await buildPortfolioSnapshot({ reuseFrom: cache.portfolio });
     cache.portfolioError = null;
   } catch (err) {
     cache.portfolioError = err.message;
@@ -58,7 +65,7 @@ async function refreshPortfolio() {
 // fund) TEFAS fetch — see portfolioService.buildPortfolioSnapshot.
 async function quickRefreshPortfolio() {
   try {
-    cache.portfolio = await buildPortfolioSnapshot({ reuseFrom: cache.portfolio });
+    cache.portfolio = await buildPortfolioSnapshot({ reuseFrom: cache.portfolio, reusePrices: true });
     cache.portfolioError = null;
   } catch (err) {
     cache.portfolioError = err.message;
