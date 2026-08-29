@@ -183,40 +183,52 @@ function prettifyKey(key) {
  *
  * @returns {Promise<{ asOf: Date|null, slices: Array<{label: string, percent: number}> }>}
  */
-async function fetchFundAllocation(fundCode, { days = 10 } = {}) {
-  const end = new Date();
-  const start = new Date();
-  // Only the single most recent row is ever used, so this asks for a short
-  // window rather than a month of 50+ column rows — far less for TEFAS's
-  // slowest endpoint to build and send. It still has to be wide enough to
-  // clear a long weekend plus TEFAS's own publishing lag, hence ~10 days
-  // rather than 1 or 2.
-  start.setDate(start.getDate() - days);
-
-  const rows = await postJson(ALLOCATION_PATH, buildBody("YAT", fundCode, start, end), {
-    timeoutMs: ALLOCATION_TIMEOUT_MS,
-  });
-
-  if (rows.length === 0) {
-    return { asOf: null, slices: [] };
-  }
-
-  const latest = rows.reduce((best, row) => {
-    const d = parseApiDate(row.tarih);
-    if (!d) return best;
-    if (!best || d > best._date) return { ...row, _date: d };
-    return best;
-  }, null);
-
-  if (!latest) return { asOf: null, slices: [] };
-
-  const slices = Object.entries(latest)
+function rowToSlices(row) {
+  return Object.entries(row)
     .filter(([key]) => !ALLOCATION_META_KEYS.has(key) && key !== "_date")
     .map(([key, value]) => ({ label: prettifyKey(key), percent: Number(value) }))
     .filter((slice) => Number.isFinite(slice.percent) && slice.percent > 0.01 && slice.percent <= 100)
     .sort((a, b) => b.percent - a.percent);
-
-  return { asOf: latest._date, slices };
 }
 
-module.exports = { fetchFundHistory, fetchFundAllocation };
+/**
+ * Fetch the latest asset-allocation breakdown for EVERY fund, in one call.
+ *
+ * This endpoint ignores the `fonKodu` filter: whatever fund you ask for,
+ * it returns a row per fund per day for all ~2000 funds on the platform.
+ * Asking for it per-fund therefore downloaded the entire market's
+ * allocation data once for every fund held, over a multi-day window —
+ * tens of thousands of 50-column rows per request — which is what made
+ * this endpoint appear to hang. Cost scales with the date window, so this
+ * keeps the window to a few days and takes the newest row per fund.
+ *
+ * @returns {Promise<Map<string, { asOf: Date, slices: Array<{label: string, percent: number}> }>>}
+ */
+async function fetchAllAllocations({ days = 3 } = {}) {
+  const end = new Date();
+  const start = new Date();
+  // A few days rather than one, so a weekend or holiday doesn't come back
+  // empty — but small, because every extra day is ~2000 more rows.
+  start.setDate(start.getDate() - days);
+
+  const rows = await postJson(ALLOCATION_PATH, buildBody("YAT", null, start, end), {
+    timeoutMs: ALLOCATION_TIMEOUT_MS,
+  });
+
+  const latestByCode = new Map();
+  for (const row of rows) {
+    const code = row.fonKodu;
+    const date = parseApiDate(row.tarih);
+    if (!code || !date) continue;
+    const existing = latestByCode.get(code);
+    if (!existing || date > existing._date) latestByCode.set(code, { ...row, _date: date });
+  }
+
+  const byCode = new Map();
+  for (const [code, row] of latestByCode) {
+    byCode.set(code, { asOf: row._date, slices: rowToSlices(row) });
+  }
+  return byCode;
+}
+
+module.exports = { fetchFundHistory, fetchAllAllocations };

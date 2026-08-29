@@ -128,6 +128,25 @@ still opens normally in a browser, which is why each fund links to it.
 Everything else on that tab (the asset-class pie charts) comes from TEFAS
 and is unaffected.
 
+There is also `npm run probe`, which tries several shapes of the
+asset-allocation request and reports which return and how fast. It's what
+established the behaviour documented below.
+
+### A quirk worth knowing: the allocation endpoint ignores the fund filter
+
+`dagilimSiraliGetirT` returns a row per fund per day for **every** fund on
+the platform (~2000), no matter which `fonKodu` you ask for. Its cost
+therefore scales with the *date window*, not with your portfolio: a 3-day
+window is ~6,000 rows (~5s), while a 30-day window is ~44,000 rows (~59s).
+
+So this app makes exactly **one** allocation request per refresh, over a
+short window, and indexes the response by fund code — rather than one
+request per fund, which downloaded the whole market's data once for every
+fund held and made the endpoint look like it was hanging.
+
+The price endpoint (`fonGnlBlgSiraliGetir`) does honour `fonKodu`, so
+prices are still fetched per fund.
+
 ## Trading and cash balance
 
 Use the **Trade** tab instead of hand-editing `portfolio.json` once you're

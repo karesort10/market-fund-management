@@ -1,6 +1,6 @@
 const fs = require("fs");
 const path = require("path");
-const { fetchFundHistory, fetchFundAllocation } = require("./tefas");
+const { fetchFundHistory, fetchAllAllocations } = require("./tefas");
 const { fetchFundHoldings } = require("./fintables");
 
 const PORTFOLIO_PATH = path.join(__dirname, "..", "..", "data", "portfolio.json");
@@ -65,7 +65,7 @@ function isFresh(timestamp, ttlMs) {
   return Date.now() - new Date(timestamp).getTime() < ttlMs;
 }
 
-async function loadFund(fund, cachedFund, { reusePrices = false } = {}) {
+async function loadFund(fund, cachedFund, { reusePrices = false, allocations = null } = {}) {
   const { quantity, cost, avgCost } = summarizeLots(fund.lots);
   const now = new Date().toISOString();
 
@@ -93,29 +93,31 @@ async function loadFund(fund, cachedFund, { reusePrices = false } = {}) {
     })(),
 
     (async () => {
-      // Asset allocation is TEFAS's slowest endpoint and its slowest-moving
-      // data (funds report composition periodically, not per-tick), so a
-      // successful result is reused for COMPOSITION_TTL_MS instead of being
-      // re-fetched on every 10-minute cycle. A failed or empty one is NOT
-      // cached, so a timeout retries on the next refresh rather than
-      // leaving the tab empty for half a day.
-      if (cachedFund && (cachedFund.allocation || []).length > 0 && isFresh(cachedFund.allocationFetchedAt, COMPOSITION_TTL_MS)) {
+      // Allocation is not fetched here: one bulk call up in
+      // buildPortfolioSnapshot covers every fund at once (the endpoint
+      // returns all funds regardless of what you ask for). `allocations`
+      // is that result, or null when a still-fresh cached value made the
+      // bulk call unnecessary.
+      if (allocations) {
+        if (allocations.error) {
+          return { slices: [], asOf: null, error: allocations.error, fetchedAt: null };
+        }
+        const hit = allocations.byCode.get(fund.code);
         return {
-          slices: cachedFund.allocation,
-          asOf: cachedFund.allocationAsOf,
+          slices: hit ? hit.slices : [],
+          asOf: hit ? hit.asOf : null,
+          // A fund missing from an otherwise-successful response simply
+          // has no breakdown published; that is not an error. Timestamp
+          // it anyway so we don't re-request on every single cycle.
           error: null,
-          fetchedAt: cachedFund.allocationFetchedAt,
+          fetchedAt: now,
         };
       }
-      const allocation = await fetchFundAllocation(fund.code).catch((err) => ({ error: err.message, slices: [] }));
       return {
-        slices: allocation.slices || [],
-        asOf: allocation.asOf || null,
-        // fetchFundAllocation resolves successfully with zero rows when
-        // TEFAS simply publishes no breakdown for a fund; that is not an
-        // error, so never invent one from an empty result.
-        error: allocation.error || null,
-        fetchedAt: allocation.error ? null : now,
+        slices: cachedFund?.allocation || [],
+        asOf: cachedFund?.allocationAsOf || null,
+        error: cachedFund?.allocationError || null,
+        fetchedAt: cachedFund?.allocationFetchedAt || null,
       };
     })(),
 
@@ -192,8 +194,23 @@ async function buildPortfolioSnapshot({ reuseFrom, reusePrices = false } = {}) {
     : [];
 
   const cachedByCode = new Map((reuseFrom?.funds || []).map((f) => [f.code, f]));
+
+  // Allocation comes from a single bulk request covering every fund, so
+  // it's fetched once here rather than inside loadFund. Skip it entirely
+  // while every held fund still has a fresh cached breakdown.
+  const needAllocation = config.funds.some((fund) => {
+    const cached = cachedByCode.get(fund.code);
+    return !(cached && isFresh(cached.allocationFetchedAt, COMPOSITION_TTL_MS));
+  });
+  let allocations = null;
+  if (needAllocation) {
+    allocations = await fetchAllAllocations()
+      .then((byCode) => ({ byCode }))
+      .catch((err) => ({ error: err.message }));
+  }
+
   const funds = await mapWithConcurrency(config.funds, FUND_FETCH_CONCURRENCY, (fund) =>
-    loadFund(fund, cachedByCode.get(fund.code), { reusePrices })
+    loadFund(fund, cachedByCode.get(fund.code), { reusePrices, allocations })
   );
 
   // A fund bought by code before TEFAS ever resolved its real title only

@@ -84,8 +84,10 @@ async function tefasCall(path, extraDays, timeoutMs) {
   const priceOk = await timed("price history   POST /api/funds/fonGnlBlgSiraliGetir", () =>
     tefasCall("/api/funds/fonGnlBlgSiraliGetir", 27, 20000)
   );
+  // This endpoint ignores the fund filter and returns every fund, so cost
+  // scales with the date window, not the portfolio — a few days only.
   const allocOk = await timed("asset allocation POST /api/funds/dagilimSiraliGetirT", () =>
-    tefasCall("/api/funds/dagilimSiraliGetirT", 10, 45000)
+    tefasCall("/api/funds/dagilimSiraliGetirT", 3, 45000)
   );
 
   console.log("\nFintables — individual stock holdings inside each fund (optional):");
