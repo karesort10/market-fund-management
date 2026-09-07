@@ -82,6 +82,23 @@ function renderSummary(snapshot) {
   profitPctEl.textContent = fmtPct(totals.profitPercent);
   profitPctEl.className = `card-sub ${positive ? "positive" : "negative"}`;
 
+  const dayEl = document.getElementById("summary-daychange");
+  const daySubEl = document.getElementById("summary-daychange-sub");
+  if (totals.dayChange == null) {
+    dayEl.textContent = "—";
+    dayEl.className = "card-value";
+    daySubEl.textContent = "Needs two trading days of prices.";
+    daySubEl.className = "card-sub";
+  } else {
+    const up = totals.dayChange >= 0;
+    dayEl.textContent = `${up ? "▲" : "▼"} ${fmtMoney(Math.abs(totals.dayChange), currency)}`;
+    dayEl.className = `card-value ${up ? "positive" : "negative"}`;
+    const since = totals.dayChangeComparedTo ? ` since ${fmtDate(totals.dayChangeComparedTo)}` : "";
+    const partial = totals.dayChangePartial ? ` · ${totals.dayChangeFundCount} of ${snapshot.funds.length} funds` : "";
+    daySubEl.textContent = `${fmtPct(totals.dayChangePercent)}${since}${partial}`;
+    daySubEl.className = `card-sub ${up ? "positive" : "negative"}`;
+  }
+
   const warning = document.getElementById("dashboard-warning");
   if (totals.unpricedFunds && totals.unpricedFunds.length > 0) {
     warning.hidden = false;
@@ -141,15 +158,21 @@ function renderHoldingsTable(snapshot) {
           <td>${f.label}<br><span class="fund-code">${f.code}</span></td>
           <td>${f.quantity.toLocaleString("tr-TR")}</td>
           <td>${fmtMoney(f.avgCost, snapshot.currency)}</td>
-          <td colspan="3" class="holdings-unavailable">Price unavailable${f.historyError ? ` (${f.historyError})` : ""}</td>
+          <td colspan="4" class="holdings-unavailable">Price unavailable${f.historyError ? ` (${f.historyError})` : ""}</td>
         </tr>`;
       }
       const cls = f.profit > 0 ? "positive" : f.profit < 0 ? "negative" : "";
+      const dayCls = f.dayChangePercent == null ? "" : f.dayChangePercent > 0 ? "positive" : f.dayChangePercent < 0 ? "negative" : "";
+      const dayCell =
+        f.dayChangePercent == null
+          ? "—"
+          : `${fmtPct(f.dayChangePercent)}<br><span class="fund-code">${f.dayChangeValue >= 0 ? "+" : "−"}${fmtMoney(Math.abs(f.dayChangeValue), snapshot.currency)}</span>`;
       return `<tr>
         <td>${f.label}<br><span class="fund-code">${f.code}</span></td>
         <td>${f.quantity.toLocaleString("tr-TR")}</td>
         <td>${fmtMoney(f.avgCost, snapshot.currency)}</td>
         <td>${fmtMoney(f.currentPrice, snapshot.currency)}</td>
+        <td class="${dayCls}">${dayCell}</td>
         <td>${fmtMoney(f.currentValue, snapshot.currency)}</td>
         <td class="${cls}">${fmtMoney(f.profit, snapshot.currency)} (${fmtPct(f.profitPercent)})</td>
       </tr>`;

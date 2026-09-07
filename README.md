@@ -10,6 +10,12 @@ a cash balance, and a news + optional AI market-analysis tab.
 
 - **Portfolio tab**
   - Total value / cost / profit (₺ and %)
+  - Change vs. the previous trading day, both for the portfolio as a whole
+    and per fund. TEFAS publishes one NAV per trading day, so this compares
+    against the last published price rather than a literal 24 hours — the
+    card names the date it compared against (on a Monday that's Friday).
+    Funds without two days of prices are excluded from both sides of the
+    percentage, and the card says so when that happens.
   - Doughnut chart of portfolio allocation by fund
   - Bar chart of profit/loss by fund
   - Holdings table (quantity, avg. cost, current price, value, P/L)

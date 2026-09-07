@@ -150,6 +150,17 @@ async function loadFund(fund, cachedFund, { reusePrices = false, allocations = n
   const profit = currentValue != null ? currentValue - cost : null;
   const profitPercent = profit != null && cost > 0 ? (profit / cost) * 100 : null;
 
+  // Day-over-day move. TEFAS publishes one NAV per *trading* day, so the
+  // previous row is the previous trading day — on a Monday that's Friday,
+  // not literally yesterday. previousDate is carried through so the UI can
+  // name the date being compared against instead of claiming "24h".
+  const previous = historyRows[historyRows.length - 2] || null;
+  const previousPrice = previous ? previous.price : null;
+  const previousDate = previous ? previous.date : null;
+  const canCompare = currentPrice != null && previousPrice != null && previousPrice > 0;
+  const dayChangePercent = canCompare ? ((currentPrice - previousPrice) / previousPrice) * 100 : null;
+  const dayChangeValue = canCompare ? (currentPrice - previousPrice) * quantity : null;
+
   return {
     code: fund.code,
     label: fund.label || latest?.title || fund.code,
@@ -160,6 +171,10 @@ async function loadFund(fund, cachedFund, { reusePrices = false, allocations = n
     currentValue,
     profit,
     profitPercent,
+    previousPrice,
+    previousDate,
+    dayChangePercent,
+    dayChangeValue,
     priced: currentPrice != null,
     priceHistory: historyRows.map((r) => ({ date: r.date, price: r.price })),
     historyError,
@@ -239,6 +254,22 @@ async function buildPortfolioSnapshot({ reuseFrom, reusePrices = false } = {}) {
   const totalProfit = totalValue - totalCost;
   const totalProfitPercent = totalCost > 0 ? (totalProfit / totalCost) * 100 : null;
 
+  // Portfolio day-over-day move. Both sides of this ratio must cover the
+  // *same* funds — mixing funds that have a previous price into a total
+  // that includes ones that don't would produce a meaningless percentage.
+  const comparable = funds.filter((f) => f.currentPrice != null && f.previousPrice != null);
+  const previousValue = comparable.reduce((sum, f) => sum + f.previousPrice * f.quantity, 0);
+  const comparableValue = comparable.reduce((sum, f) => sum + f.currentPrice * f.quantity, 0);
+  const dayChange = comparable.length > 0 ? comparableValue - previousValue : null;
+  const dayChangePercent = previousValue > 0 ? (dayChange / previousValue) * 100 : null;
+  // The date being compared against — the latest previous trading day
+  // seen across the funds that could be compared.
+  const comparedTo = comparable.reduce((latestSeen, f) => {
+    const d = f.previousDate ? new Date(f.previousDate) : null;
+    if (!d || Number.isNaN(d.getTime())) return latestSeen;
+    return !latestSeen || d > latestSeen ? d : latestSeen;
+  }, null);
+
   const allocationByFund = funds.map((f) => ({
     code: f.code,
     label: f.label,
@@ -255,6 +286,13 @@ async function buildPortfolioSnapshot({ reuseFrom, reusePrices = false } = {}) {
       profit: totalProfit,
       profitPercent: totalProfitPercent,
       unpricedFunds,
+      dayChange,
+      dayChangePercent,
+      dayChangeComparedTo: comparedTo ? comparedTo.toISOString() : null,
+      // Flags a day change computed from only part of the portfolio, so
+      // the UI can say so rather than implying it covers everything.
+      dayChangePartial: comparable.length > 0 && comparable.length < funds.length,
+      dayChangeFundCount: comparable.length,
     },
     balance: {
       cash: cashBalance,
